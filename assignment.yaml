@@ -1,0 +1,407 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  BastionInstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+    Description: Enter instance size. Default is t3.medium.
+
+  WebInstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+    Description: Enter instance size. Default is t3.large.
+    
+  AppInstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+    Description: Enter instance size. Default is t3.large.
+
+  WebServerAMI:
+    Type: String
+    Default: ami-08f63db601b82ff5f #Windows Server 2019 SQL Server Express 2019
+    Description: The Windows AMI to use.
+  
+  AppServerAMI:
+    Type: String
+    Default: ami-08f63db601b82ff5f #Windows Server 2019 
+    Description: The Windows AMI to use.
+
+  BastionAMI:
+    Type: String
+    Default: ami-08f63db601b82ff5f #Windows Server 2019 Base Version
+    Description: The Windows AMI to use.
+
+  Key:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: The key used to access the instance.
+    
+  Key:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: The key used to access the instance.
+    
+  PublicAlbAcmCertificate:
+    Type: String
+    Description: ACM Certificate Arn
+    
+    
+
+Resources: #List of Resources Required for Infrastructure
+
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/20
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: MyVPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  BastionSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: ap-south-1a
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Bastion Subnet
+          
+  LoadBalancerSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: ap-south-1b
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: LoadBalancer Subnet
+
+  FrontendSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: ap-south-1b
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: Frontend Subnet
+   
+  BackendSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: ap-south-1b
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.2.0/24
+      Tags:
+        - Key: Name
+          Value: Backend Subnet
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: Public RouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: Private RouteTable
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: NatEIP
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+          - NatEIP
+          - AllocationId
+      SubnetId: !Ref BastionSubnet
+      Tags:
+        - Key: Name
+          Value: NatGateway
+
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  InternetRouteEntry:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGateway
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateEnvRouteEntry:
+    Type: AWS::EC2::Route
+    DependsOn: NatGateway
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+      RouteTableId: !Ref PrivateRouteTable
+
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref BastionSubnet
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref FrontendSubnet
+      
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref BackendSubnet
+
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "bastion newTarget Group"
+      GroupDescription: "bastion newTarget Group"
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: 34.23.14.14/32
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Bastion SG
+
+  FrontendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "Test new Target Group"
+      GroupDescription: "Test new Target Group"
+      VpcId: !Ref MyVPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Frontend SG
+         
+  PublicAlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "ALB Target Group"
+      GroupDescription: "ALB Target Group"
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "443"
+          ToPort: "443"
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Bastion SG
+
+  FrontendServerSecurityIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: String
+      GroupId: !Ref FrontendSecurityGroup
+      IpProtocol: tcp
+      FromPort: "22"
+      ToPort: "22"
+      SourceSecurityGroupId: !GetAtt BastionSecurityGroup.GroupId
+      
+  FrontendServer2ndSecurityIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: BackendSecurityGroup
+    Properties:
+      Description: String
+      GroupId: !Ref FrontendSecurityGroup
+      IpProtocol: tcp
+      FromPort: "80"
+      ToPort: "80"
+      SourceSecurityGroupId: !GetAtt BackendSecurityGroup.GroupId
+      
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "Backend Target Group"
+      GroupDescription: "backend Target Group"
+      VpcId: !Ref MyVPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Backend SG
+
+  BackendServerSecurityIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: String
+      GroupId: !Ref BackendSecurityGroup
+      IpProtocol: tcp
+      FromPort: "80"
+      ToPort: "80"
+      SourceSecurityGroupId: !GetAtt FrontendSecurityGroup.GroupId
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref BastionServer
+
+  BastionServer: #Bastion Server to Connect to EC2 Server Instance
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: !Ref BastionAMI
+      InstanceType:
+        Ref: BastionInstanceType
+      KeyName: !Ref Key
+      SubnetId: !Ref BastionSubnet
+      SecurityGroupIds:
+        - Ref: BastionSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+      Tags:
+        - Key: Bastion
+          Value: Server
+ 
+
+  WebServer: 
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: !Ref WebServerAMI
+      InstanceType:
+        Ref: WebInstanceType
+      KeyName: !Ref Key
+      SubnetId: !Ref FrontendSubnet
+      SecurityGroupIds:
+        - Ref: FrontendSecurityGroup
+      UserData:
+        "Fn::Base64":
+          !Sub |
+            #!/bin/bash -xe
+            yum update -y
+            sudo yum install httpd -y
+            sudo yum install curl -y
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 50
+      Tags:
+        - Key: Web
+          Value: Server
+          
+  AppServer: 
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: !Ref AppServerAMI
+      InstanceType:
+        Ref: AppInstanceType
+      KeyName: !Ref Key
+      SubnetId: !Ref BackendSubnet
+      SecurityGroupIds:
+        - Ref: BackendSecurityGroup
+      UserData:
+        "Fn::Base64":
+          !Sub |
+            #!/bin/bash -xe
+            yum update -y
+            sudo yum install httpd -y
+            sudo yum install curl -y
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 50
+      Tags:
+        - Key: App
+          Value: Server
+
+  PublicAlbListenerNoSslCertificate:
+    Type : AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref PublicAlbTargetGroup
+      LoadBalancerArn: !Ref PublicApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+  PublicAlbListenerSslCertificate:
+    Type : AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+      - CertificateArn: !Ref PublicAlbAcmCertificate
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref PublicAlbTargetGroup
+      LoadBalancerArn: !Ref PublicApplicationLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+  PublicApplicationLoadBalancer: 
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets: 
+        - !Ref BastionSubnet
+        - !Ref LoadBalancerSubnet
+      LoadBalancerAttributes:
+      - Key: idle_timeout.timeout_seconds
+        Value: 60
+      SecurityGroups:
+      - !Ref PublicAlbSecurityGroup
+      
+  PublicAlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /var/www/html
+      HealthCheckTimeoutSeconds: 5
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref MyVPC
+  
